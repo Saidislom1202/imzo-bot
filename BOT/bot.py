@@ -18,10 +18,23 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 
 # === SOZLAMALAR ===
 TOKEN = "8591659134:AAFGyN4WstAJ77vICb6wS4y9zkUXDoV_aVw"
-ADMIN_IDS = [1168625514, 987654321]
+
+# ID'larni o'zingizniki bilan almashtiring:
+CREATOR_ADMIN_ID = 1168625514  # Buyurtma yaratuvchi (Admin)
+EXECUTOR_ID = 1477633344        # Buyurtmani bajaruvchi (Tugatuvchi xodim)
+
+# Tizimdagi barcha foydalanuvchilar ID'lari (Admin, Bajaruvchi va Kuzatuvchilar)
+ALLOWED_USERS = [
+    1168625514,  # Buyurtma yaratuvchi Admin
+    987654321,   # Bajaruvchi xodim
+    123456789,   # Kuzatuvchi 1
+    111222333,   # Kuzatuvchi 2
+    444555666,   # Kuzatuvchi 3
+    777888999,   # Kuzatuvchi 4
+    000111222    # Kuzatuvchi 5
+]
 
 GET_ID, GET_SHOWROOM, GET_DEADLINE = range(3)
-REG_INFO = 10
 
 # === RENDER UCHUN FLASK WEBSERVER ===
 web_app = Flask('')
@@ -45,13 +58,6 @@ def init_db():
     conn = sqlite3.connect("orders.db")
     cursor = conn.cursor()
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            full_name TEXT,
-            status TEXT DEFAULT 'pending'
-        )
-    """)
-    cursor.execute("""
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             order_id TEXT,
@@ -64,41 +70,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-def add_user_request(user_id, name):
-    conn = sqlite3.connect("orders.db")
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO users (user_id, full_name, status) VALUES (?, ?, 'pending')", (user_id, name))
-    conn.commit()
-    conn.close()
-
-def update_user_status(user_id, status):
-    conn = sqlite3.connect("orders.db")
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET status = ? WHERE user_id = ?", (status, user_id))
-    conn.commit()
-    conn.close()
-
-def get_user_status(user_id):
-    if user_id in ADMIN_IDS:
-        return 'approved'
-    conn = sqlite3.connect("orders.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT status FROM users WHERE user_id = ?", (user_id,))
-    row = cursor.fetchone()
-    conn.close()
-    return row[0] if row else None
-
-def get_approved_users():
-    conn = sqlite3.connect("orders.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id FROM users WHERE status = 'approved'")
-    users = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    for admin_id in ADMIN_IDS:
-        if admin_id not in users:
-            users.append(admin_id)
-    return list(set(users))
-
 def save_order(order_id, showroom, deadline):
     conn = sqlite3.connect("orders.db")
     cursor = conn.cursor()
@@ -108,62 +79,26 @@ def save_order(order_id, showroom, deadline):
 
 # === BOT HANDLERLARI ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    status = get_user_status(user.id)
+    user_id = update.effective_user.id
 
-    if status == 'approved':
-        await update.message.reply_text("Assalomu alaykum! Siz tizimdasiz.\n\nBuyurtma kiritish uchun /zakaz buyrug'ini yuboring.")
-        return ConversationHandler.END
-    elif status == 'pending':
-        await update.message.reply_text("⏳ So'rovingiz ko'rib chiqilmoqda. Admin ruxsat berishini kuting.")
-        return ConversationHandler.END
-    elif status == 'rejected':
-        await update.message.reply_text("🚫 Sizga botdan foydalanish uchun ruxsat berilmagan.")
+    if user_id not in ALLOWED_USERS:
+        await update.message.reply_text("🚫 Sizga ushbu botdan foydalanish uchun ruxsat berilmagan!")
         return ConversationHandler.END
 
-    await update.message.reply_text(
-        "🔒 Sizda tizimga kirish ruxsati yo'q!\n\n"
-        "Ruxsat olish uchun Ism, Familiyangiz va Lavozimingizni yozib yuboring:\n"
-        "(Masalan: Ali Valiyev - Chilonzor filial sotuvchisi)"
-    )
-    return REG_INFO
-
-async def receive_user_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    info_text = update.message.text.strip()
-    
-    add_user_request(user.id, info_text)
-
-    await update.message.reply_text("✅ Ma'lumotlaringiz adminga yuborildi. Tasdiqlanishini kuting, ruxsat berilsa darhol xabar beramiz!")
-
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ Ruxsat berish", callback_data=f"allow_{user.id}"),
-            InlineKeyboardButton("🚫 Rad etish", callback_data=f"deny_{user.id}")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    username_val = "@" + user.username if user.username else "Yo'q"
-    admin_msg = (
-        f"🔔 YANGI RUXSAT SO'ROVI!\n\n"
-        f"👤 Telegram: {user.full_name}\n"
-        f"🌐 Username: {username_val}\n"
-        f"🆔 ID: {user.id}\n"
-        f"📝 Ma'lumot: {info_text}"
-    )
-
-    for admin_id in ADMIN_IDS:
-        try:
-            await context.bot.send_message(chat_id=admin_id, text=admin_msg, reply_markup=reply_markup)
-        except Exception as e:
-            logging.error(f"Adminga xabar yuborishda xato: {e}")
+    if user_id == CREATOR_ADMIN_ID:
+        await update.message.reply_text("Assalomu alaykum Admin!\n\nBuyurtma yaratish uchun /zakaz buyrug'ini yuboring.")
+    elif user_id == EXECUTOR_ID:
+        await update.message.reply_text("Assalomu alaykum! Siz buyurtmalarni bajaruvchi xodimsiz. Buyurtmalar kelishini kuting.")
+    else:
+        await update.message.reply_text("Assalomu alaykum! Siz tizimdasiz (kuzatuvchi rejimida).")
 
     return ConversationHandler.END
 
 async def start_zakaz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ Faqat Admin buyurtma kirita oladi!")
+    user_id = update.effective_user.id
+    
+    if user_id != CREATOR_ADMIN_ID:
+        await update.message.reply_text("❌ Faqat maxsus Admin buyurtma yarata oladi!")
         return ConversationHandler.END
 
     await update.message.reply_text("📝 Zakaz ID'sini kiriting:\n(Masalan: 1245)")
@@ -196,13 +131,14 @@ async def get_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⏳ Muddat: {deadline}"
     )
 
-    for u_id in get_approved_users():
+    # Barcha 7 kishiga xabar yuboriladi
+    for u_id in ALLOWED_USERS:
         try:
             await context.bot.send_message(chat_id=u_id, text=msg_text, reply_markup=reply_markup)
         except Exception:
             pass
 
-    await update.message.reply_text("✅ Buyurtma saqlandi va barcha xodimlarga yuborildi!")
+    await update.message.reply_text("✅ Buyurtma saqlandi va barcha a'zolarga yuborildi!")
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -212,35 +148,15 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = update.effective_user
+
+    # Faqat belgilangan EXECUTOR tugmani bosa oladi
+    if user.id != EXECUTOR_ID:
+        await query.answer("🚫 Sizda bu buyurtmani bajarildi deb belgilash ruxsati yo'q!", show_alert=True)
+        return
+
     data = query.data
 
-    status = get_user_status(user.id)
-
-    if data.startswith("allow_"):
-        if user.id not in ADMIN_IDS:
-            await query.answer("❌ Faqat Admin ruxsat bera oladi!", show_alert=True)
-            return
-        target_id = int(data.split("allow_")[1])
-        update_user_status(target_id, 'approved')
-        await query.edit_message_text(text=query.message.text + "\n\n✅ Ruxsat berildi!")
-        try:
-            await context.bot.send_message(chat_id=target_id, text="🎉 Tabriklaymiz! Sizga ruxsat berildi, siz tizimdasiz.")
-        except Exception:
-            pass
-
-    elif data.startswith("deny_"):
-        if user.id not in ADMIN_IDS:
-            await query.answer("❌ Faqat Admin rad eta oladi!", show_alert=True)
-            return
-        target_id = int(data.split("deny_")[1])
-        update_user_status(target_id, 'rejected')
-        await query.edit_message_text(text=query.message.text + "\n\n🚫 Rad etildi.")
-
-    elif data.startswith("done_"):
-        if status != 'approved':
-            await query.answer("🚫 Sizda tugmani bosish ruxsati yo'q! Avval /start bosib ruxsat oling.", show_alert=True)
-            return
-
+    if data.startswith("done_"):
         order_id = data.split("done_")[1]
         username_str = f"@{user.username}" if user.username else "Username yo'q"
         full_user_name = f"{user.full_name} ({username_str})"
@@ -252,20 +168,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✅ BAJARILDI!\n"
                 f"👤 Bajaruvchi: {full_user_name}"
             )
+            # Tugmani olib tashlab, kartochkani yangilaymiz
             await query.edit_message_text(text=updated_text, reply_markup=None)
 
             admin_msg = (
                 f"🔔 BUYURTMA BAJARILDI!\n\n"
                 f"🆔 Zakaz ID: {order_id}\n"
-                f"👤 Xodim: {user.full_name}\n"
-                f"🌐 Username: {username_str}\n"
-                f"🆔 Telegram ID: {user.id}"
+                f"👤 Bajaruvchi xodim: {user.full_name}\n"
+                f"🌐 Username: {username_str}"
             )
-            for admin_id in ADMIN_IDS:
-                try:
-                    await context.bot.send_message(chat_id=admin_id, text=admin_msg)
-                except Exception:
-                    pass
+            try:
+                await context.bot.send_message(chat_id=CREATOR_ADMIN_ID, text=admin_msg)
+            except Exception:
+                pass
         else:
             await query.answer("❌ Bu buyurtma allaqachon bajarilgan!", show_alert=True)
 
@@ -275,14 +190,6 @@ if __name__ == "__main__":
     keep_alive()
 
     app = ApplicationBuilder().token(TOKEN).build()
-
-    auth_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
-        states={
-            REG_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_user_info)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)]
-    )
 
     zakaz_handler = ConversationHandler(
         entry_points=[CommandHandler('zakaz', start_zakaz)],
@@ -294,7 +201,7 @@ if __name__ == "__main__":
         fallbacks=[CommandHandler('cancel', cancel)]
     )
 
-    app.add_handler(auth_handler)
+    app.add_handler(CommandHandler('start', start))
     app.add_handler(zakaz_handler)
     app.add_handler(CallbackQueryHandler(button_callback))
 
