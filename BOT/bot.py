@@ -20,7 +20,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 TOKEN = "8591659134:AAFGyN4WstAJ77vICb6wS4y9zkUXDoV_aVw"
 
 ADMIN_ID = 1168625514      # Admin (so'rovlarni tasdiqlaydi)
-CREATOR_ID = 1477633344     # Buyurtma yaratuvchi xodim (/zakaz)
+CREATOR_ID = 6171433145     # Buyurtma yaratuvchi xodim (/zakaz)
 EXECUTOR_ID = 1168625514    # Faqat SHU O'ZGARUVCHIDAGI ID buyurtmani yakunlay oladi
 
 GET_ID, GET_SHOWROOM, GET_DEADLINE = range(3)
