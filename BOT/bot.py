@@ -18,7 +18,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 
 # === SOZLAMALAR ===
 TOKEN = "8591659134:AAFGyN4WstAJ77vICb6wS4y9zkUXDoV_aVw"
-ADMIN_IDS = [1168625514, 987654321]  # O'zingizning Telegram ID'ingizni tekshiring
+ADMIN_IDS = [1168625514, 987654321]
 
 GET_ID, GET_SHOWROOM, GET_DEADLINE = range(3)
 REG_INFO = 10
@@ -144,10 +144,11 @@ async def receive_user_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
+    username_val = "@" + user.username if user.username else "Yo'q"
     admin_msg = (
         f"🔔 YANGI RUXSAT SO'ROVI!\n\n"
         f"👤 Telegram: {user.full_name}\n"
-        f"🌐 Username: @{user.username if user.username else 'Yo'q'}\n"
+        f"🌐 Username: {username_val}\n"
         f"🆔 ID: {user.id}\n"
         f"📝 Ma'lumot: {info_text}"
     )
