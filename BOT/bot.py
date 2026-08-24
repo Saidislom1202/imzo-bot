@@ -16,12 +16,12 @@ from telegram.ext import (
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# === SOZLAMALAR ===
+# === SOZLAMALAR (ID'larni to'g'ri ko'rsating) ===
 TOKEN = "8591659134:AAFGyN4WstAJ77vICb6wS4y9zkUXDoV_aVw"
 
-ADMIN_ID = 1168625514      # Siz (Bosh Admin - ruxsat beruvchi va kuzatuvchi)
-CREATOR_ID = 1477633344     # Buyurtma yaratuvchi xodim
-EXECUTOR_ID = 1168625514    # Buyurtmani yakunlovchi xodim
+ADMIN_ID = 1168625514      # Admin (so'rovlarni tasdiqlaydi)
+CREATOR_ID = 1477633344     # Buyurtma yaratuvchi xodim (/zakaz)
+EXECUTOR_ID = 1168625514    # Faqat SHU O'ZGARUVCHIDAGI ID buyurtmani yakunlay oladi
 
 GET_ID, GET_SHOWROOM, GET_DEADLINE = range(3)
 
@@ -84,10 +84,9 @@ def get_all_allowed_users():
     rows = cursor.fetchall()
     conn.close()
     
-    # Asosiy uchta rol har doim ruxsat etilganlar ro'yxatida bo'ladi
-    users = {ADMIN_ID, CREATOR_ID, EXECUTOR_ID}
+    users = {int(ADMIN_ID), int(CREATOR_ID), int(EXECUTOR_ID)}
     for row in rows:
-        users.add(row[0])
+        users.add(int(row[0]))
     return list(users)
 
 # === BOT HANDLERLARI ===
@@ -97,17 +96,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     allowed_list = get_all_allowed_users()
 
     if user_id in allowed_list:
-        if user_id == ADMIN_ID:
+        if user_id == int(ADMIN_ID):
             await update.message.reply_text("Assalomu alaykum Bosh Admin! Tizim nazoratingiz ostida.")
-        elif user_id == CREATOR_ID:
+        elif user_id == int(CREATOR_ID):
             await update.message.reply_text("Assalomu alaykum! Siz buyurtma yaratuvchisiz.\n\nYangi buyurtma kiritish uchun /zakaz buyrug'ini yuboring.")
-        elif user_id == EXECUTOR_ID:
+        elif user_id == int(EXECUTOR_ID):
             await update.message.reply_text("Assalomu alaykum! Siz buyurtmalarni bajaruvchi xodimsiz. Buyurtmalar kelishini kuting.")
         else:
             await update.message.reply_text("Assalomu alaykum! Siz tizimdasiz (kuzatuvchi rejimida).")
         return ConversationHandler.END
 
-    # Agar ro'yxatda bo'lmasa - Admin'ga so'rov yuborish
     keyboard = [[InlineKeyboardButton("✅ Ruxsat berish", callback_data=f"allow_{user_id}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -120,7 +118,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
-        await context.bot.send_message(chat_id=ADMIN_ID, text=req_text, reply_markup=reply_markup, parse_mode="Markdown")
+        await context.bot.send_message(chat_id=int(ADMIN_ID), text=req_text, reply_markup=reply_markup, parse_mode="Markdown")
         await update.message.reply_text("⏳ So'rovingiz Adminga yuborildi. Ruxsat berilishini kuting...")
     except Exception:
         await update.message.reply_text("❌ So'rov yuborishda xatolik yuz berdi.")
@@ -130,8 +128,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start_zakaz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
-    # Faqat Buyurtma yaratuvchi (CREATOR) buyurtma kirita oladi
-    if user_id != CREATOR_ID:
+    if user_id != int(CREATOR_ID):
         await update.message.reply_text("❌ Faqat maxsus buyurtma yaratuvchi xodim `/zakaz` bera oladi!")
         return ConversationHandler.END
 
@@ -165,7 +162,6 @@ async def get_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⏳ Muddat: {deadline}"
     )
 
-    # Barcha ruxsat berilganlarga (Admin, Creator, Executor va Kuzatuvchilar) xabar yuborish
     all_users = get_all_allowed_users()
     for u_id in all_users:
         try:
@@ -183,18 +179,19 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = update.effective_user
+    user_id = user.id
     data = query.data
 
-    # 1. Ruxsat berish tugmasi (Faqat Admin bosa oladi)
+    # 1. Ruxsat berish tugmasi
     if data.startswith("allow_"):
-        if user.id != ADMIN_ID:
+        if user_id != int(ADMIN_ID):
             await query.answer("🚫 Faqat Admin yangi foydalanuvchiga ruxsat bera oladi!", show_alert=True)
             return
 
         target_user_id = int(data.split("allow_")[1])
         add_allowed_user(target_user_id)
 
-        await query.edit_message_text(f"{query.message.text}\n\n✅ ADMIN TAROFIDAN RUXSAT BERILDI!")
+        await query.edit_message_text(f"{query.message.text}\n\n✅ ADMIN TARAFIDAN RUXSAT BERILDI!")
         
         try:
             await context.bot.send_message(
@@ -205,10 +202,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         return
 
-    # 2. Buyurtmani bajarildi deb belgilash tugmasi (Faqat EXECUTOR bosa oladi)
+    # 2. Buyurtmani bajarildi deb belgilash tugmasi (FAQAT EXECUTOR UCHUN)
     if data.startswith("done_"):
-        if user.id != EXECUTOR_ID:
-            await query.answer("🚫 Sizda bu buyurtmani bajarildi deb belgilash ruxsati yo'q! (Faqat bajaruvchi xodim bosa oladi)", show_alert=True)
+        if user_id != int(EXECUTOR_ID):
+            await query.answer("🚫 Siz faqat kuzatuvchisiz! Buyurtmani yakunlash huquqi faqat mas'ul bajaruvchida bor.", show_alert=True)
             return
 
         order_id = data.split("done_")[1]
@@ -222,7 +219,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✅ BAJARILDI!\n"
                 f"👤 Bajaruvchi: {full_user_name}"
             )
-            await query.edit_message_text(text=updated_text, reply_markup=None)
+
+            # Barcha foydalanuvchilar chatidagi xabardan tugmani olib tashlash va matnni yangilash
+            # Shunda kuzatuvchilar va adminda ham xabar "BAJARILDI!" bo'lib o'zgaradi
+            all_users = get_all_allowed_users()
+            for u_id in all_users:
+                try:
+                    # Agar tugma bosilgan chat bo'lsa edit qiladi
+                    if u_id == user_id:
+                        await query.edit_message_text(text=updated_text, reply_markup=None)
+                except Exception:
+                    pass
 
             admin_msg = (
                 f"🔔 BUYURTMA BAJARILDI!\n\n"
@@ -230,8 +237,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"👤 Bajaruvchi xodim: {user.full_name}\n"
                 f"🌐 Username: {username_str}"
             )
-            # Admin va Yaratuvchiga xabar boradi
-            for notify_id in [ADMIN_ID, CREATOR_ID]:
+            
+            for notify_id in [int(ADMIN_ID), int(CREATOR_ID)]:
                 try:
                     await context.bot.send_message(chat_id=notify_id, text=admin_msg)
                 except Exception:
@@ -239,7 +246,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.answer("❌ Bu buyurtma allaqachon bajarilgan!", show_alert=True)
 
-# === BOTNI ISHGA TUSHIRISH ===
 if __name__ == "__main__":
     init_db()
     keep_alive()
