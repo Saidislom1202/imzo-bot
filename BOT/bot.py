@@ -18,8 +18,6 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 
 # === SOZLAMALAR ===
 TOKEN = "8591659134:AAFGyN4WstAJ77vICb6wS4y9zkUXDoV_aVw"
-
-# Adminlar ID ro'yxati
 ADMIN_IDS = [1168625514, 987654321]
 
 GET_ID, GET_SHOWROOM, GET_DEADLINE = range(3)
@@ -56,7 +54,7 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            order_id TEXT UNIQUE,
+            order_id TEXT,
             showroom TEXT,
             deadline TEXT,
             status TEXT DEFAULT 'pending',
@@ -104,18 +102,9 @@ def get_approved_users():
 def save_order(order_id, showroom, deadline):
     conn = sqlite3.connect("orders.db")
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO orders (order_id, showroom, deadline) VALUES (?, ?, ?)", (order_id, showroom, deadline))
+    cursor.execute("INSERT INTO orders (order_id, showroom, deadline) VALUES (?, ?, ?)", (str(order_id), showroom, deadline))
     conn.commit()
     conn.close()
-
-def complete_order(order_id, user_name):
-    conn = sqlite3.connect("orders.db")
-    cursor = conn.cursor()
-    cursor.execute("UPDATE orders SET status = 'completed', completed_by = ? WHERE order_id = ? AND status = 'pending'", (user_name, order_id))
-    affected = cursor.rowcount
-    conn.commit()
-    conn.close()
-    return affected > 0
 
 # === BOT HANDLERLARI ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -187,29 +176,25 @@ async def get_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE):
     showroom = context.user_data['showroom']
     deadline = update.message.text.strip()
 
-    try:
-        save_order(order_id, showroom, deadline)
+    save_order(order_id, showroom, deadline)
 
-        keyboard = [[InlineKeyboardButton("✅ Bajarildi deb belgilash", callback_data=f"done_{order_id}")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+    keyboard = [[InlineKeyboardButton("✅ Bajarildi deb belgilash", callback_data=f"done_{order_id}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
-        msg_text = (
-            f"📦 **YANGI BUYURTMA!**\n\n"
-            f"🆔 **Zakaz ID:** `{order_id}`\n"
-            f"🏢 **Shourum:** {showroom}\n"
-            f"⏳ **Muddat:** {deadline}"
-        )
+    msg_text = (
+        f"📦 **YANGI BUYURTMA!**\n\n"
+        f"🆔 **Zakaz ID:** `{order_id}`\n"
+        f"🏢 **Shourum:** {showroom}\n"
+        f"⏳ **Muddat:** {deadline}"
+    )
 
-        for u_id in get_approved_users():
-            try:
-                await context.bot.send_message(chat_id=u_id, text=msg_text, parse_mode="Markdown", reply_markup=reply_markup)
-            except Exception:
-                pass
+    for u_id in get_approved_users():
+        try:
+            await context.bot.send_message(chat_id=u_id, text=msg_text, parse_mode="Markdown", reply_markup=reply_markup)
+        except Exception:
+            pass
 
-        await update.message.reply_text("✅ Buyurtma saqlandi va barcha xodimlarga yuborildi!")
-    except sqlite3.IntegrityError:
-        await update.message.reply_text("❌ Bu Zakaz ID allaqachon mavjud!")
-
+    await update.message.reply_text("✅ Buyurtma saqlandi va barcha xodimlarga yuborildi!")
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -221,9 +206,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     data = query.data
 
-    await query.answer()
+    # Ruxsatni tekshirish
+    status = get_user_status(user.id)
 
     if data.startswith("allow_"):
+        if user.id not in ADMIN_IDS:
+            await query.answer("❌ Faqat Admin ruxsat bera oladi!", show_alert=True)
+            return
         target_id = int(data.split("allow_")[1])
         update_user_status(target_id, 'approved')
         await query.edit_message_text(text=query.message.text + "\n\n✅ **Ruxsat berildi!**")
@@ -233,27 +222,32 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     elif data.startswith("deny_"):
+        if user.id not in ADMIN_IDS:
+            await query.answer("❌ Faqat Admin rad eta oladi!", show_alert=True)
+            return
         target_id = int(data.split("deny_")[1])
         update_user_status(target_id, 'rejected')
         await query.edit_message_text(text=query.message.text + "\n\n🚫 **Rad etildi.**")
 
     elif data.startswith("done_"):
-        order_id = data.split("done_")[1]
+        # Begona odam bossa ogohlantirish berish
+        if status != 'approved':
+            await query.answer("🚫 Sizda tugmani bosish ruxsati yo'q! Avval /start bosib ruxsat oling.", show_alert=True)
+            return
 
-        # Foydalanuvchining Ismi va Username'ini shakllantirish
+        order_id = data.split("done_")[1]
         username_str = f"@{user.username}" if user.username else "Username yo'q"
         full_user_name = f"{user.full_name} ({username_str})"
 
-        if complete_order(order_id, full_user_name):
-            # Xabarni yangilab, tugmani olib tashlaymiz va Bajaruvchi nomini yozamiz
+        original_text = query.message.text
+        if "✅ BAJARILDI!" not in original_text:
             updated_text = (
-                f"{query.message.text}\n\n"
+                f"{original_text}\n\n"
                 f"✅ **BAJARILDI!**\n"
                 f"👤 **Bajaruvchi:** {full_user_name}"
             )
             await query.edit_message_text(text=updated_text, parse_mode="Markdown", reply_markup=None)
 
-            # Adminga maxsus xabar yuborish
             admin_msg = (
                 f"🔔 **BUYURTMA BAJARILDI!**\n\n"
                 f"🆔 **Zakaz ID:** `{order_id}`\n"
@@ -267,13 +261,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     pass
         else:
-            await query.answer("❌ Bu buyurtma allaqachon bajarilgan yoki topilmadi!", show_alert=True)
+            await query.answer("❌ Bu buyurtma allaqachon bajarilgan!", show_alert=True)
 
 # === BOTNI ISHGA TUSHIRISH ===
 if __name__ == "__main__":
     init_db()
-    
-    # Veb-serverni fonda ishga tushirish
     keep_alive()
 
     app = ApplicationBuilder().token(TOKEN).build()
