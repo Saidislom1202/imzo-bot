@@ -18,7 +18,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 
 # === SOZLAMALAR ===
 TOKEN = "8591659134:AAFGyN4WstAJ77vICb6wS4y9zkUXDoV_aVw"
-ADMIN_IDS = [1168625514, 987654321]
+ADMIN_IDS = [1168625514, 987654321]  # O'zingizning Telegram ID'ingizni tekshiring
 
 GET_ID, GET_SHOWROOM, GET_DEADLINE = range(3)
 REG_INFO = 10
@@ -114,13 +114,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if status == 'approved':
         await update.message.reply_text("Assalomu alaykum! Siz tizimdasiz.\n\nBuyurtma kiritish uchun /zakaz buyrug'ini yuboring.")
         return ConversationHandler.END
+    elif status == 'pending':
+        await update.message.reply_text("⏳ So'rovingiz ko'rib chiqilmoqda. Admin ruxsat berishini kuting.")
+        return ConversationHandler.END
     elif status == 'rejected':
         await update.message.reply_text("🚫 Sizga botdan foydalanish uchun ruxsat berilmagan.")
         return ConversationHandler.END
 
     await update.message.reply_text(
-        "🔒 **Sizda tizimga kirish ruxsati yo'q!**\n\n"
-        "Ruxsat olish uchun **Ism, Familiyangiz va Lavozimingizni** yozib yuboring:\n"
+        "🔒 Sizda tizimga kirish ruxsati yo'q!\n\n"
+        "Ruxsat olish uchun Ism, Familiyangiz va Lavozimingizni yozib yuboring:\n"
         "(Masalan: Ali Valiyev - Chilonzor filial sotuvchisi)"
     )
     return REG_INFO
@@ -128,28 +131,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def receive_user_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     info_text = update.message.text.strip()
+    
     add_user_request(user.id, info_text)
 
-    await update.message.reply_text("✅ Ma'lumotlaringiz adminga yuborildi. Ruxsat berilishi bilan xabar beramiz!")
+    await update.message.reply_text("✅ Ma'lumotlaringiz adminga yuborildi. Tasdiqlanishini kuting, ruxsat berilsa darhol xabar beramiz!")
 
     keyboard = [
         [
             InlineKeyboardButton("✅ Ruxsat berish", callback_data=f"allow_{user.id}"),
-            InlineKeyboardButton("🚫 Spam / Rad etish", callback_data=f"deny_{user.id}")
+            InlineKeyboardButton("🚫 Rad etish", callback_data=f"deny_{user.id}")
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
+    admin_msg = (
+        f"🔔 YANGI RUXSAT SO'ROVI!\n\n"
+        f"👤 Telegram: {user.full_name}\n"
+        f"🌐 Username: @{user.username if user.username else 'Yo'q'}\n"
+        f"🆔 ID: {user.id}\n"
+        f"📝 Ma'lumot: {info_text}"
+    )
+
     for admin_id in ADMIN_IDS:
         try:
-            await context.bot.send_message(
-                chat_id=admin_id,
-                text=f"🔔 **Yangi ruxsat so'rovi!**\n\n👤 **Telegram:** {user.full_name}\n🆔 **ID:** `{user.id}`\n📝 **Ma'lumot:** {info_text}",
-                parse_mode="Markdown",
-                reply_markup=reply_markup
-            )
-        except Exception:
-            pass
+            await context.bot.send_message(chat_id=admin_id, text=admin_msg, reply_markup=reply_markup)
+        except Exception as e:
+            logging.error(f"Adminga xabar yuborishda xato: {e}")
 
     return ConversationHandler.END
 
@@ -158,17 +165,17 @@ async def start_zakaz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Faqat Admin buyurtma kirita oladi!")
         return ConversationHandler.END
 
-    await update.message.reply_text("📝 **Zakaz ID'sini kiriting:**\n(Masalan: 1245)")
+    await update.message.reply_text("📝 Zakaz ID'sini kiriting:\n(Masalan: 1245)")
     return GET_ID
 
 async def get_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['order_id'] = update.message.text.strip()
-    await update.message.reply_text("🏢 **Shourum nomini kiriting:**\n(Masalan: Chilonzor Showroom)")
+    await update.message.reply_text("🏢 Shourum nomini kiriting:\n(Masalan: Chilonzor Showroom)")
     return GET_SHOWROOM
 
 async def get_showroom(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['showroom'] = update.message.text.strip()
-    await update.message.reply_text("⏳ **Muddatni kiriting:**\n(Masalan: 2 kun)")
+    await update.message.reply_text("⏳ Muddatni kiriting:\n(Masalan: 2 kun)")
     return GET_DEADLINE
 
 async def get_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -182,15 +189,15 @@ async def get_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     msg_text = (
-        f"📦 **YANGI BUYURTMA!**\n\n"
-        f"🆔 **Zakaz ID:** `{order_id}`\n"
-        f"🏢 **Shourum:** {showroom}\n"
-        f"⏳ **Muddat:** {deadline}"
+        f"📦 YANGI BUYURTMA!\n\n"
+        f"🆔 Zakaz ID: {order_id}\n"
+        f"🏢 Shourum: {showroom}\n"
+        f"⏳ Muddat: {deadline}"
     )
 
     for u_id in get_approved_users():
         try:
-            await context.bot.send_message(chat_id=u_id, text=msg_text, parse_mode="Markdown", reply_markup=reply_markup)
+            await context.bot.send_message(chat_id=u_id, text=msg_text, reply_markup=reply_markup)
         except Exception:
             pass
 
@@ -206,7 +213,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     data = query.data
 
-    # Ruxsatni tekshirish
     status = get_user_status(user.id)
 
     if data.startswith("allow_"):
@@ -215,9 +221,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         target_id = int(data.split("allow_")[1])
         update_user_status(target_id, 'approved')
-        await query.edit_message_text(text=query.message.text + "\n\n✅ **Ruxsat berildi!**")
+        await query.edit_message_text(text=query.message.text + "\n\n✅ Ruxsat berildi!")
         try:
-            await context.bot.send_message(chat_id=target_id, text="🎉 Tabriklaymiz! Sizga botdan foydalanish uchun ruxsat berildi.")
+            await context.bot.send_message(chat_id=target_id, text="🎉 Tabriklaymiz! Sizga ruxsat berildi, siz tizimdasiz.")
         except Exception:
             pass
 
@@ -227,10 +233,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         target_id = int(data.split("deny_")[1])
         update_user_status(target_id, 'rejected')
-        await query.edit_message_text(text=query.message.text + "\n\n🚫 **Rad etildi.**")
+        await query.edit_message_text(text=query.message.text + "\n\n🚫 Rad etildi.")
 
     elif data.startswith("done_"):
-        # Begona odam bossa ogohlantirish berish
         if status != 'approved':
             await query.answer("🚫 Sizda tugmani bosish ruxsati yo'q! Avval /start bosib ruxsat oling.", show_alert=True)
             return
@@ -243,21 +248,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if "✅ BAJARILDI!" not in original_text:
             updated_text = (
                 f"{original_text}\n\n"
-                f"✅ **BAJARILDI!**\n"
-                f"👤 **Bajaruvchi:** {full_user_name}"
+                f"✅ BAJARILDI!\n"
+                f"👤 Bajaruvchi: {full_user_name}"
             )
-            await query.edit_message_text(text=updated_text, parse_mode="Markdown", reply_markup=None)
+            await query.edit_message_text(text=updated_text, reply_markup=None)
 
             admin_msg = (
-                f"🔔 **BUYURTMA BAJARILDI!**\n\n"
-                f"🆔 **Zakaz ID:** `{order_id}`\n"
-                f"👤 **Xodim:** {user.full_name}\n"
-                f"🌐 **Username:** {username_str}\n"
-                f"🆔 **Telegram ID:** `{user.id}`"
+                f"🔔 BUYURTMA BAJARILDI!\n\n"
+                f"🆔 Zakaz ID: {order_id}\n"
+                f"👤 Xodim: {user.full_name}\n"
+                f"🌐 Username: {username_str}\n"
+                f"🆔 Telegram ID: {user.id}"
             )
             for admin_id in ADMIN_IDS:
                 try:
-                    await context.bot.send_message(chat_id=admin_id, text=admin_msg, parse_mode="Markdown")
+                    await context.bot.send_message(chat_id=admin_id, text=admin_msg)
                 except Exception:
                     pass
         else:
