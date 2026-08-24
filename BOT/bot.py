@@ -1,5 +1,8 @@
+import os
 import sqlite3
 import logging
+from threading import Thread
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, 
@@ -16,12 +19,30 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 # === SOZLAMALAR ===
 TOKEN = "8591659134:AAFGyN4WstAJ77vICb6wS4y9zkUXDoV_aVw"
 
-# Adminlar ID ro'yxati (shu yerga istalgancha admin ID sini qo'shishingiz mumkin)
-ADMIN_IDS = [1168625514, 987654321]  # O'zingizning va boshqa adminlarning ID raqamlari
+# Adminlar ID ro'yxati
+ADMIN_IDS = [1168625514, 987654321]
 
 GET_ID, GET_SHOWROOM, GET_DEADLINE = range(3)
 REG_INFO = 10
 
+# === RENDER UCHUN FLASK WEBSERVER ===
+web_app = Flask('')
+
+@web_app.route('/')
+@web_app.route('/health')
+def home():
+    return "OK", 200
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    web_app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_web)
+    t.daemon = True
+    t.start()
+
+# === DATABASE FUNKSIYALARI ===
 def init_db():
     conn = sqlite3.connect("orders.db")
     cursor = conn.cursor()
@@ -96,6 +117,7 @@ def complete_order(order_id, user_name):
     conn.close()
     return affected > 0
 
+# === BOT HANDLERLARI ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     status = get_user_status(user.id)
@@ -129,7 +151,6 @@ async def receive_user_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Barcha adminlarga ruxsat so'rovini yuborish
     for admin_id in ADMIN_IDS:
         try:
             await context.bot.send_message(
@@ -198,9 +219,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = update.effective_user
-    user_id = user.id
-    
-    user_identifier = f"@{user.username}" if user.username else user.full_name
     data = query.data
 
     await query.answer()
@@ -220,28 +238,44 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text=query.message.text + "\n\n🚫 **Rad etildi.**")
 
     elif data.startswith("done_"):
-        if get_user_status(user_id) != 'approved':
-            await query.answer("❌ Sizda bu tugmani bosish ruxsati yo'q!", show_alert=True)
-            return
-
         order_id = data.split("done_")[1]
-        if complete_order(order_id, user_identifier):
-            new_text = f"{query.message.text}\n\n✅ **BAJARILDI!**\n👤 **Bajaruvchi:** {user_identifier}"
-            await query.edit_message_text(text=new_text, parse_mode="Markdown")
 
-            for u_id in get_approved_users():
-                if u_id != user_id:
-                    try:
-                        await context.bot.send_message(
-                            chat_id=u_id, 
-                            text=f"📢 **Zakaz ID: {order_id}** bajarildi!\n👤 **Bajaruvchi:** {user_identifier}",
-                            parse_mode="Markdown"
-                        )
-                    except Exception:
-                        pass
+        # Foydalanuvchining Ismi va Username'ini shakllantirish
+        username_str = f"@{user.username}" if user.username else "Username yo'q"
+        full_user_name = f"{user.full_name} ({username_str})"
 
+        if complete_order(order_id, full_user_name):
+            # Xabarni yangilab, tugmani olib tashlaymiz va Bajaruvchi nomini yozamiz
+            updated_text = (
+                f"{query.message.text}\n\n"
+                f"✅ **BAJARILDI!**\n"
+                f"👤 **Bajaruvchi:** {full_user_name}"
+            )
+            await query.edit_message_text(text=updated_text, parse_mode="Markdown", reply_markup=None)
+
+            # Adminga maxsus xabar yuborish
+            admin_msg = (
+                f"🔔 **BUYURTMA BAJARILDI!**\n\n"
+                f"🆔 **Zakaz ID:** `{order_id}`\n"
+                f"👤 **Xodim:** {user.full_name}\n"
+                f"🌐 **Username:** {username_str}\n"
+                f"🆔 **Telegram ID:** `{user.id}`"
+            )
+            for admin_id in ADMIN_IDS:
+                try:
+                    await context.bot.send_message(chat_id=admin_id, text=admin_msg, parse_mode="Markdown")
+                except Exception:
+                    pass
+        else:
+            await query.answer("❌ Bu buyurtma allaqachon bajarilgan yoki topilmadi!", show_alert=True)
+
+# === BOTNI ISHGA TUSHIRISH ===
 if __name__ == "__main__":
     init_db()
+    
+    # Veb-serverni fonda ishga tushirish
+    keep_alive()
+
     app = ApplicationBuilder().token(TOKEN).build()
 
     auth_handler = ConversationHandler(
