@@ -1,0 +1,16 @@
+[Unit]
+Description=Zakaz Boshqaruv Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/BOT
+ExecStart=/home/ubuntu/BOT/venv/bin/python /home/ubuntu/BOT/bot.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/ubuntu/BOT/bot.log
+StandardError=append:/home/ubuntu/BOT/bot.log
+
+[Install]
+WantedBy=multi-user.target
