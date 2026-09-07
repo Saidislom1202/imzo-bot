@@ -197,6 +197,31 @@ def parse_deadline(text):
             continue
     return None
 
+def get_pending_orders():
+    conn = sqlite3.connect("orders.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT order_id, showroom, deadline_date FROM orders
+        WHERE status = 'pending'
+        ORDER BY deadline_date
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+def get_completed_orders(limit=20):
+    conn = sqlite3.connect("orders.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT order_id, showroom, completed_by, completed_at FROM orders
+        WHERE status = 'completed'
+        ORDER BY completed_at DESC
+        LIMIT ?
+    """, (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
 def save_order(order_id, showroom, deadline_text, deadline_date):
     conn = sqlite3.connect("orders.db")
     cursor = conn.cursor()
@@ -532,6 +557,39 @@ async def statistika(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(generate_statistics(), parse_mode="Markdown")
 
+async def joriy_holat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if get_user_status(update.effective_user.id) != 'approved':
+        await update.message.reply_text("❌ Sizda bu ma'lumotni ko'rish uchun ruxsat yo'q.")
+        return
+
+    pending = get_pending_orders()
+    completed = get_completed_orders(limit=20)
+    today = date.today()
+
+    lines = ["📋 **JORIY HOLAT**\n", f"⏳ **Kutilayotgan zakazlar ({len(pending)} ta):**"]
+    if pending:
+        for order_id, showroom, deadline_date_str in pending:
+            days_left = (date.fromisoformat(deadline_date_str) - today).days
+            if days_left > 0:
+                lines.append(f"🆔 `{order_id}` ({showroom}) — {days_left} kun qoldi")
+            elif days_left == 0:
+                lines.append(f"🆔 `{order_id}` ({showroom}) — BUGUN tugaydi!")
+            else:
+                lines.append(f"🆔 `{order_id}` ({showroom}) — ⚠️ {-days_left} kun kechikkan!")
+    else:
+        lines.append("Hozircha kutilayotgan zakaz yo'q.")
+
+    lines.append(f"\n✅ **So'nggi bajarilgan zakazlar (oxirgi {len(completed)} ta):**")
+    if completed:
+        for order_id, showroom, completed_by, completed_at in completed:
+            lines.append(f"🆔 `{order_id}` ({showroom}) — {completed_by or '-'} | {completed_at or '-'}")
+    else:
+        lines.append("Hali bajarilgan zakaz yo'q.")
+
+    text = "\n".join(lines)
+    for i in range(0, len(text), 4000):
+        await update.message.reply_text(text[i:i + 4000], parse_mode="Markdown")
+
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = update.effective_user
@@ -652,6 +710,7 @@ async def post_init(app):
         BotCommand("bekor", "Buyurtmani bekor qilish (Yaratuvchi/Admin)"),
         BotCommand("hisobot", "Oylik hisobotni Excel'da yuklab olish (Admin)"),
         BotCommand("statistika", "Umumiy statistikani ko'rish (Admin)"),
+        BotCommand("holat", "Joriy holat: bajarilgan va kutilayotgan zakazlar ro'yxati"),
         BotCommand("cancel", "Joriy amalni bekor qilish"),
     ])
 
@@ -692,6 +751,7 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler('hisobot', hisobot))
     app.add_handler(CommandHandler('bekor', bekor_qilish))
     app.add_handler(CommandHandler('statistika', statistika))
+    app.add_handler(CommandHandler('holat', joriy_holat))
     app.add_handler(CallbackQueryHandler(button_callback))
 
     print("Bot muvaffaqiyatli ishga tushdi...")
