@@ -34,8 +34,11 @@ if not TOKEN:
 ADMIN_IDS = [1168625514]
 
 # Standart rollar oldindan belgilangan foydalanuvchilar
-DEFAULT_CREATOR_ID = 1477633344   # Zakaz yaratuvchi
-DEFAULT_EXECUTOR_ID = 6171433145  # Zakaz bajaruvchi
+DEFAULT_CREATOR_ID = 7013318890            # Zakaz shakillantiruvchi
+DEFAULT_EXECUTOR_IDS = [467848004, 6756726326]  # Zakaz bajaruvchilari (ikkalasi ham tasdiqlashi shart)
+
+# Zakazni yakunlash uchun necha nafar bajaruvchi tasdiqlashi kerak
+REQUIRED_CONFIRMATIONS = 2
 
 ROLE_NAMES = {
     'creator': "📝 Zakaz yaratuvchi",
@@ -97,6 +100,17 @@ def init_db():
             cursor.execute(f"ALTER TABLE orders ADD COLUMN {col_def}")
         except sqlite3.OperationalError:
             pass  # ustun allaqachon mavjud
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS order_confirmations (
+            order_id TEXT,
+            user_id INTEGER,
+            user_name TEXT,
+            chat_id INTEGER,
+            message_id INTEGER,
+            confirmed_at TEXT,
+            PRIMARY KEY (order_id, user_id)
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -127,10 +141,9 @@ def approve_user(user_id, role):
 def seed_default_users():
     conn = sqlite3.connect("orders.db")
     cursor = conn.cursor()
-    defaults = [
-        (DEFAULT_CREATOR_ID, "Zakaz yaratuvchi (standart)", "creator"),
-        (DEFAULT_EXECUTOR_ID, "Zakaz bajaruvchi (standart)", "executor"),
-    ]
+    defaults = [(DEFAULT_CREATOR_ID, "Zakaz yaratuvchi (standart)", "creator")]
+    for idx, uid in enumerate(DEFAULT_EXECUTOR_IDS, start=1):
+        defaults.append((uid, f"Zakaz bajaruvchi {idx} (standart)", "executor"))
     for uid, name, role in defaults:
         cursor.execute("""
             INSERT INTO users (user_id, full_name, status, role)
@@ -193,6 +206,45 @@ def save_order(order_id, showroom, deadline_text, deadline_date):
     )
     conn.commit()
     conn.close()
+
+def get_order(order_id):
+    conn = sqlite3.connect("orders.db")
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT order_id, showroom, deadline, deadline_date, status FROM orders WHERE order_id = ?",
+        (order_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+def add_confirmation(order_id, user_id, user_name, chat_id, message_id):
+    """Buyurtmani bajaruvchi tomonidan tasdiqlanishini qayd etadi.
+    Qaytaradi: (bu yangi tasdiq bo'ldimi, shu buyurtma bo'yicha barcha tasdiqlar ro'yxati)."""
+    conn = sqlite3.connect("orders.db")
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT OR IGNORE INTO order_confirmations (order_id, user_id, user_name, chat_id, message_id, confirmed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (order_id, user_id, user_name, chat_id, message_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    )
+    is_new = cursor.rowcount > 0
+    conn.commit()
+    cursor.execute(
+        "SELECT user_id, user_name, chat_id, message_id FROM order_confirmations WHERE order_id = ? ORDER BY confirmed_at",
+        (order_id,)
+    )
+    confirmations = cursor.fetchall()
+    conn.close()
+    return is_new, confirmations
+
+def format_order_base(order_id, showroom, deadline_text, deadline_date):
+    return (
+        f"📦 **YANGI BUYURTMA!**\n\n"
+        f"🆔 **Zakaz ID:** `{order_id}`\n"
+        f"🏢 **Shourum:** {showroom}\n"
+        f"⏳ **Muddat:** {deadline_text} ({deadline_date.strftime('%d.%m.%Y')})"
+    )
 
 def complete_order(order_id, user_name):
     conn = sqlite3.connect("orders.db")
@@ -413,12 +465,7 @@ async def get_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("✅ Bajarildi deb belgilash", callback_data=f"done_{order_id}")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        msg_text = (
-            f"📦 **YANGI BUYURTMA!**\n\n"
-            f"🆔 **Zakaz ID:** `{order_id}`\n"
-            f"🏢 **Shourum:** {showroom}\n"
-            f"⏳ **Muddat:** {deadline_text} ({deadline_date.strftime('%d.%m.%Y')})"
-        )
+        msg_text = format_order_base(order_id, showroom, deadline_text, deadline_date)
 
         creator_id = update.effective_user.id
         for u_id in get_approved_users():
@@ -523,36 +570,79 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         order_id = data.split("done_")[1]
+        order = get_order(order_id)
+        if order is None or order[4] != 'pending':
+            await query.answer("❌ Bu buyurtma allaqachon bajarilgan yoki topilmadi!", show_alert=True)
+            return
+        _, showroom, deadline_text, deadline_date_str, _ = order
+        deadline_date = date.fromisoformat(deadline_date_str)
+        base_text = format_order_base(order_id, showroom, deadline_text, deadline_date)
 
         # Foydalanuvchining Ismi va Username'ini shakllantirish
         username_str = f"@{user.username}" if user.username else "Username yo'q"
         full_user_name = f"{user.full_name} ({username_str})"
 
-        if complete_order(order_id, full_user_name):
-            await query.answer()
-            # Xabarni yangilab, tugmani olib tashlaymiz va Bajaruvchi nomini yozamiz
-            updated_text = (
-                f"{query.message.text}\n\n"
-                f"✅ **BAJARILDI!**\n"
-                f"👤 **Bajaruvchi:** {full_user_name}"
-            )
-            await query.edit_message_text(text=updated_text, parse_mode="Markdown", reply_markup=None)
+        is_new, confirmations = add_confirmation(
+            order_id, user.id, full_user_name, query.message.chat_id, query.message.message_id
+        )
 
-            # Adminga maxsus xabar yuborish
-            admin_msg = (
-                f"🔔 **BUYURTMA BAJARILDI!**\n\n"
-                f"🆔 **Zakaz ID:** `{order_id}`\n"
-                f"👤 **Xodim:** {user.full_name}\n"
-                f"🌐 **Username:** {username_str}\n"
-                f"🆔 **Telegram ID:** `{user.id}`"
+        if not is_new:
+            remaining = max(REQUIRED_CONFIRMATIONS - len(confirmations), 0)
+            await query.answer(
+                f"ℹ️ Siz bu buyurtmani allaqachon tasdiqlagansiz. Yakunlanishi uchun yana {remaining} ta bajaruvchi tasdiqlashi kerak.",
+                show_alert=True
             )
-            for admin_id in ADMIN_IDS:
-                try:
-                    await context.bot.send_message(chat_id=admin_id, text=admin_msg, parse_mode="Markdown")
-                except Exception:
-                    pass
-        else:
-            await query.answer("❌ Bu buyurtma allaqachon bajarilgan yoki topilmadi!", show_alert=True)
+            return
+
+        if len(confirmations) < REQUIRED_CONFIRMATIONS:
+            remaining = REQUIRED_CONFIRMATIONS - len(confirmations)
+            await query.answer("✅ Tasdiqlandi! Yakunlanishi uchun yana bitta bajaruvchi tasdiqlashi kerak.", show_alert=True)
+            confirmed_lines = "\n".join(f"🔸 {c_name}" for _, c_name, _, _ in confirmations)
+            updated_text = (
+                f"{base_text}\n\n"
+                f"**Tasdiqlangan ({len(confirmations)}/{REQUIRED_CONFIRMATIONS}):**\n{confirmed_lines}\n\n"
+                f"⏳ Yakunlanishi uchun yana {remaining} ta bajaruvchi tasdiqlashi kerak."
+            )
+            keyboard = [[InlineKeyboardButton("✅ Bajarildi deb belgilash", callback_data=f"done_{order_id}")]]
+            await query.edit_message_text(text=updated_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
+        # Talab qilingan barcha bajaruvchilar tasdiqladi — buyurtma to'liq yakunlandi
+        names_only = [c_name for _, c_name, _, _ in confirmations]
+        completed_by_text = " va ".join(names_only)
+        complete_order(order_id, completed_by_text)
+        await query.answer("✅ Buyurtma to'liq yakunlandi!")
+
+        final_text = (
+            f"{base_text}\n\n"
+            f"✅ **BAJARILDI!**\n"
+            f"👥 **Bajaruvchilar:** {completed_by_text}"
+        )
+
+        # Tasdiqlagan har bir bajaruvchining o'zidagi xabarini yakuniy holatga yangilaymiz
+        for c_user_id, c_name, c_chat_id, c_message_id in confirmations:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=c_chat_id, message_id=c_message_id, text=final_text, parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+
+        # Yakunlanganini hammaga (jumladan kuzatuvchilarga) e'lon qilamiz
+        broadcast_text = (
+            f"🎉 **BUYURTMA TO'LIQ YAKUNLANDI!**\n\n"
+            f"🆔 **Zakaz ID:** `{order_id}`\n"
+            f"🏢 **Shourum:** {showroom}\n"
+            f"👥 **Bajaruvchilar:** {completed_by_text}"
+        )
+        confirmed_ids = {c[0] for c in confirmations}
+        for u_id in get_approved_users():
+            if u_id in confirmed_ids:
+                continue
+            try:
+                await context.bot.send_message(chat_id=u_id, text=broadcast_text, parse_mode="Markdown")
+            except Exception:
+                pass
 
 # === BOTNI ISHGA TUSHIRISH ===
 async def post_init(app):
