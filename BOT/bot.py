@@ -34,8 +34,8 @@ if not TOKEN:
 ADMIN_IDS = [1168625514]
 
 # Standart rollar oldindan belgilangan foydalanuvchilar
-DEFAULT_CREATOR_ID = 1477633344   # Zakaz yaratuvchi
-DEFAULT_EXECUTOR_ID = 6171433145  # Zakaz bajaruvchi
+DEFAULT_CREATOR_ID = 7013318890   # Zakaz yaratuvchi
+DEFAULT_EXECUTOR_ID = 467848004, 6756726326  # Zakaz bajaruvchi
 
 ROLE_NAMES = {
     'creator': "📝 Zakaz yaratuvchi",
